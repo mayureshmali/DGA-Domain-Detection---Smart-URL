@@ -1,0 +1,111 @@
+import json
+import random
+import logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+import pandas as pd
+import numpy as np
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+import tldextract
+import boto3
+import re
+import math
+from itertools import groupby
+import math
+from collections import Counter
+
+        
+def domain_extract(uri):
+    ext = tldextract.extract(uri)
+    if (not ext.suffix):
+        return np.nan
+    else:
+        return ext.domain
+        
+def entropy(s):
+    p, lns = Counter(s), float(len(s))
+    return -sum( count/lns * math.log(count/lns, 2) for count in p.values())
+    
+def calc_vowels(y):
+    num_vowel = 0
+    vowels = list('aeiou')
+    for char in y:
+        if char in vowels:
+            num_vowel += 1
+
+    return num_vowel
+    
+def calc_digits(z):
+    num_digit = 0
+    digits = list('0123456789')
+    for char in z:
+        if char in digits:
+            num_digit += 1
+
+    return num_digit
+    
+def consecutive_consonants(string):
+    from itertools import groupby
+    is_vowel = lambda char: char in "aAeEiIoOuU"
+    best = 0
+    listnames = ["".join(g) for v, g in groupby(string, key=is_vowel) if not v]
+    for index in range(len(listnames)):
+        if len(listnames[index]) > best:
+            best = len(listnames[index])
+    return best
+    
+def test_it(domain):    
+    _X = [len(domain), entropy(domain), calc_vowels(domain), calc_digits(domain), consecutive_consonants(domain)]
+    return _X
+    
+def predict_one_dga_value(sm_client, features, endpoint_name):
+    
+    # print('Using model endpoint {} to predict dga for this feature vector: {}'.format(endpoint_name, features))
+
+    body = features   # error is to_csv is not defined
+    
+    #start_time = time.time()
+
+    response = sm_client.invoke_endpoint(
+        
+        EndpointName=endpoint_name,
+        ContentType='text/csv',
+        Accept='*/*',
+        Body=body)
+        
+    predicted_prob = json.loads(response['Body'].read())
+    return predicted_prob, predicted_prob >= 0.5
+
+        
+def lambda_handler(event, context):
+    runtime_sm_client = boto3.client(service_name='sagemaker-runtime')
+    #return json.dumps(event)
+    
+    if 'myParam' not in event:
+        return {
+            'statusCode': 227,
+            'body': json.dumps('MISSING queryStringParameters')
+        }
+    else:
+        query_parms = event['myParam']
+        #return query_parms
+        logger.info(msg=query_parms)
+        
+        test_data = query_parms
+        
+        abc = domain_extract(test_data)
+        
+        features = test_it(abc)
+        request_body = ','.join([str(x) for x in features])
+
+        predicted_prob, pred_val = predict_one_dga_value(sm_client=runtime_sm_client, features=request_body, endpoint_name='xgboost-2020-05-14-22-36-11-971')
+
+        logger.info(msg=query_parms)
+        return {
+            'statusCode': 200,
+            'body': {
+                'prediction': pred_val,
+                'predicted_prob': predicted_prob
+            }
+        }
